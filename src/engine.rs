@@ -49,6 +49,7 @@ pub struct Options {
     pub ignore_module_settings: bool,
     pub ignore_collation: bool,
     pub ignore_column_order: bool,
+    pub auto_map_similar_columns: bool,
     pub ignore_column_name_case: bool,
     pub ignore_default_constraint_names: bool,
     pub ignore_indexes: bool,
@@ -389,6 +390,43 @@ fn table_migration(
     target: &Object,
     options: &Options,
 ) -> Result<TableMigration, String> {
+    let mappings = crate::column_mapping::auto_column_mappings(source, target, options);
+    if !mappings.is_empty() {
+        if target.columns.iter().any(|c| c.computed.is_some()) {
+            return Err(
+                "Auto-mapped column rename requires review of computed-column dependencies".into(),
+            );
+        }
+        let mut renamed_target = target.clone();
+        let mut rename_sql = String::new();
+        for mapping in &mappings {
+            let old = target
+                .columns
+                .iter()
+                .find(|c| c.name == mapping.target)
+                .unwrap();
+            rename_sql.push_str(&column_guards(target, old));
+            rename_sql.push_str(&format!(
+                "EXEC sys.sp_rename @objname=N'{}.{}', @newname=N'{}', @objtype=N'COLUMN';\nGO\n",
+                target.qualified().replace('\'', "''"),
+                quote(&mapping.target).replace('\'', "''"),
+                mapping.source.replace('\'', "''")
+            ));
+            renamed_target
+                .columns
+                .iter_mut()
+                .find(|c| c.name == mapping.target)
+                .unwrap()
+                .name = mapping.source.clone();
+        }
+        let mut without_mapping = options.clone();
+        without_mapping.auto_map_similar_columns = false;
+        let migration = table_migration(source, &renamed_target, &without_mapping)?;
+        return Ok(TableMigration {
+            sql: rename_sql + &migration.sql,
+            alters_columns: true,
+        });
+    }
     let target_names: BTreeSet<_> = target
         .columns
         .iter()
@@ -696,9 +734,23 @@ pub fn plan(source: &Snapshot, target: &Snapshot, diffs: &[Difference], options:
                         Ok(migration) => {
                             if migration.alters_columns {
                                 altered_tables.insert(d.key.clone());
+                                let mappings = crate::column_mapping::auto_column_mappings(
+                                    o,
+                                    d.target.as_ref().unwrap(),
+                                    options,
+                                );
+                                for mapping in &mappings {
+                                    p.warnings.push(format!("{}: auto-map Target {} → Source {} using sp_rename; existing data is preserved. Review dependent modules before deploying.", o.qualified(), quote(&mapping.target), quote(&mapping.source)));
+                                }
                                 p.warnings.push(format!("{}: apply Source column definitions; related indexes/constraints are rebuilt in the transaction. Datatype narrowing checks existing values first. This may lock the table and take time.",o.qualified()));
                                 if let Some(names) = removed_columns.get(&d.key) {
-                                    p.warnings.push(format!("{}: DROP COLUMN {} to match Source. Data in these removed columns is deleted. Renamed columns are treated as drop/add; values are not copied automatically.",o.qualified(),names.iter().map(|n|quote(n)).collect::<Vec<_>>().join(", ")));
+                                    let dropped: Vec<_> = names
+                                        .iter()
+                                        .filter(|name| !mappings.iter().any(|m| m.target == **name))
+                                        .collect();
+                                    if !dropped.is_empty() {
+                                        p.warnings.push(format!("{}: DROP COLUMN {} to match Source. Data in these removed columns is deleted. Unmapped renames are treated as drop/add; values are not copied automatically.",o.qualified(),dropped.iter().map(|n|quote(n)).collect::<Vec<_>>().join(", ")));
+                                    }
                                 }
                             }
                             creates.insert(d.key.clone(), (o, migration.sql));
@@ -750,6 +802,30 @@ pub fn plan(source: &Snapshot, target: &Snapshot, diffs: &[Difference], options:
     // Recreate even identical/ignored target dependencies. Ignore options must
     // never cause an existing FK/index/check to disappear during a column ALTER.
     for dependency in &target.objects {
+        if options.auto_map_similar_columns
+            && is_module(&dependency.kind)
+            && removal_affects(dependency, &removed_columns)
+        {
+            let rename_related = diffs.iter().any(|d| {
+                chosen.contains(&d.key)
+                    && d.source
+                        .as_ref()
+                        .zip(d.target.as_ref())
+                        .is_some_and(|(s, t)| {
+                            !crate::column_mapping::auto_column_mappings(s, t, options).is_empty()
+                        })
+                    && dependency.dependencies.contains(&d.key)
+            });
+            if rename_related {
+                let desired = source.objects.iter().find(|o| o.key() == dependency.key());
+                if (dependency.kind != Kind::Trigger && !chosen.contains(&dependency.key()))
+                    || desired.is_some_and(|o| removal_affects(o, &removed_columns))
+                    || (dependency.kind != Kind::Trigger && desired.is_none())
+                {
+                    p.blockers.push(format!("{}: auto-mapped rename affects this module. Select its updated Source definition before deploying.", dependency.qualified()));
+                }
+            }
+        }
         if is_module(&dependency.kind)
             && normalized(&dependency.definition, true)
                 .iter()

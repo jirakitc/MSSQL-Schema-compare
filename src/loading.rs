@@ -9,11 +9,28 @@ pub fn load_pair(
     target: &Endpoint,
     progress: impl FnMut(&str, &str),
 ) -> Result<(Snapshot, Snapshot)> {
+    load_pair_cancellable(
+        source,
+        target,
+        progress,
+        &crate::cancellation::CancellationToken::default(),
+    )
+}
+pub fn load_pair_cancellable(
+    source: &Endpoint,
+    target: &Endpoint,
+    progress: impl FnMut(&str, &str),
+    cancel: &crate::cancellation::CancellationToken,
+) -> Result<(Snapshot, Snapshot)> {
+    cancel.check()?;
     parallel_pair(
         |tx| {
-            let snapshot = source.load_with_progress(|stage| {
-                let _ = tx.send(("Source", stage.into()));
-            })?;
+            let snapshot = source.load_cancellable(
+                |stage| {
+                    let _ = tx.send(("Source", stage.into()));
+                },
+                cancel,
+            )?;
             let _ = tx.send((
                 "Source",
                 format!("Complete: {} catalog objects", snapshot.objects.len()),
@@ -21,9 +38,12 @@ pub fn load_pair(
             Ok(snapshot)
         },
         |tx| {
-            let snapshot = target.load_with_progress(|stage| {
-                let _ = tx.send(("Target", stage.into()));
-            })?;
+            let snapshot = target.load_cancellable(
+                |stage| {
+                    let _ = tx.send(("Target", stage.into()));
+                },
+                cancel,
+            )?;
             let _ = tx.send((
                 "Target",
                 format!("Complete: {} catalog objects", snapshot.objects.len()),

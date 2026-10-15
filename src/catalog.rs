@@ -43,18 +43,33 @@ struct Dep {
 pub fn capture(c: &Connection) -> Result<Snapshot> {
     capture_with_progress(c, |_| {})
 }
-pub fn capture_with_progress(c: &Connection, mut progress: impl FnMut(&str)) -> Result<Snapshot> {
+pub fn capture_with_progress(c: &Connection, progress: impl FnMut(&str)) -> Result<Snapshot> {
+    capture_cancellable(
+        c,
+        progress,
+        &crate::cancellation::CancellationToken::default(),
+    )
+}
+pub fn capture_cancellable(
+    c: &Connection,
+    mut progress: impl FnMut(&str),
+    cancel: &crate::cancellation::CancellationToken,
+) -> Result<Snapshot> {
+    cancel.check()?;
     if c.server.trim().is_empty() || c.database.trim().is_empty() {
         bail!("Server and database are required");
     }
     let sql = include_str!("catalog.sql");
     progress("Connecting to SQL Server and reading schema catalogs");
-    let raw = run_query(c, sql)?;
+    let raw = run_query_cancellable(c, sql, 120, Some(cancel))?;
+    cancel.check()?;
     progress("Decoding tables, columns, modules, indexes and constraints");
     let json = decode_hex_json(&raw)?;
     let rows: Vec<RawObject> = serde_json::from_str(&json).context("Decode schema catalog JSON")?;
     progress("Building object definitions and validating dependencies");
-    snapshot_from_rows(c, rows)
+    let snapshot = snapshot_from_rows(c, rows)?;
+    cancel.check()?;
+    Ok(snapshot)
 }
 /// Execute a reviewed planner script. SQLCMD failure stops subsequent batches.
 pub fn execute_deployment(c: &Connection, sql: &str) -> Result<String> {
@@ -201,10 +216,15 @@ fn sqlcmd_path() -> std::path::PathBuf {
         "sqlcmd".into()
     }
 }
-fn run_query(c: &Connection, sql: &str) -> Result<String> {
-    run_query_timeout(c, sql, 120)
-}
 fn run_query_timeout(c: &Connection, sql: &str, timeout: u32) -> Result<String> {
+    run_query_cancellable(c, sql, timeout, None)
+}
+fn run_query_cancellable(
+    c: &Connection,
+    sql: &str,
+    timeout: u32,
+    cancel: Option<&crate::cancellation::CancellationToken>,
+) -> Result<String> {
     let temp = tempfile::tempdir()?;
     let input = temp.path().join("catalog.sql");
     let output = temp.path().join("catalog.txt");
@@ -255,9 +275,13 @@ fn run_query_timeout(c: &Connection, sql: &str, timeout: u32) -> Result<String> 
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000);
     }
-    let result = cmd
-        .output()
-        .context("Cannot run sqlcmd. Install Microsoft SQL Server Command Line Utilities (ODBC)")?;
+    let result = if let Some(cancel) = cancel {
+        crate::cancellation::run_command(&mut cmd, cancel)?
+    } else {
+        cmd.output().context(
+            "Cannot run sqlcmd. Install Microsoft SQL Server Command Line Utilities (ODBC)",
+        )?
+    };
     let bytes = std::fs::read(&output).unwrap_or_default();
     let text =
         decode_utf16(&bytes).unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned());

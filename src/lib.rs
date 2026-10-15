@@ -1,4 +1,6 @@
+pub mod cancellation;
 pub mod catalog;
+pub mod column_mapping;
 pub mod comparison;
 pub mod database_browser;
 pub mod deployment;

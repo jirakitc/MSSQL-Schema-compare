@@ -3,22 +3,44 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Endpoint {
     pub snapshot: bool,
     pub path: String,
     pub connection: Connection,
 }
+impl Default for Endpoint {
+    fn default() -> Self {
+        Self {
+            snapshot: false,
+            path: String::new(),
+            connection: Connection {
+                windows_auth: false,
+                ..Default::default()
+            },
+        }
+    }
+}
 impl Endpoint {
     pub fn load(&self) -> Result<Snapshot> {
         self.load_with_progress(|_| {})
     }
-    pub fn load_with_progress(&self, mut progress: impl FnMut(&str)) -> Result<Snapshot> {
+    pub fn load_with_progress(&self, progress: impl FnMut(&str)) -> Result<Snapshot> {
+        self.load_cancellable(progress, &crate::cancellation::CancellationToken::default())
+    }
+    pub fn load_cancellable(
+        &self,
+        mut progress: impl FnMut(&str),
+        cancel: &crate::cancellation::CancellationToken,
+    ) -> Result<Snapshot> {
+        cancel.check()?;
         if self.snapshot {
             progress("Reading and validating snapshot file");
-            Snapshot::read(Path::new(&self.path))
+            let snapshot = Snapshot::read(Path::new(&self.path))?;
+            cancel.check()?;
+            Ok(snapshot)
         } else {
-            crate::catalog::capture_with_progress(&self.connection, progress)
+            crate::catalog::capture_cancellable(&self.connection, progress, cancel)
         }
     }
     pub fn label(&self) -> String {
@@ -154,6 +176,7 @@ pub fn parse_redgate(xml: &str) -> Result<Project> {
             ignore_module_settings: enabled("IgnoreQuotedIdentifiersAndAnsiNulls"),
             ignore_collation: enabled("IgnoreCollations"),
             ignore_column_order: !enabled("ForceColumnOrder"),
+            auto_map_similar_columns: enabled("AutoMapSimilarColumns"),
             ignore_column_name_case: !enabled("UseCaseSensitiveObjectDefinition") && !enabled("CaseSensitiveObjectDefinition"),
             ignore_indexes: enabled("IgnoreIndexes"),
             ignore_foreign_keys: enabled("IgnoreForeignKeys"),
@@ -322,6 +345,19 @@ pub fn active_redgate_project() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_projects_default_to_sql_auth_and_saved_windows_auth_is_preserved() {
+        let mut project = Project::default();
+        assert!(!project.source.connection.windows_auth);
+        assert!(!project.target.connection.windows_auth);
+        project.source.connection.windows_auth = true;
+        let saved = serde_json::to_string(&project).unwrap();
+        let loaded: Project = serde_json::from_str(&saved).unwrap();
+        assert!(loaded.source.connection.windows_auth);
+        assert!(!loaded.target.connection.windows_auth);
+        // Command-line/integration connections retain their Windows-auth default.
+        assert!(Connection::default().windows_auth);
+    }
     const XML: &str = r#"<Project><DataSource1 type="LiveDatabaseSource"><ServerName>source,1433</ServerName><DatabaseName>App</DatabaseName><Username>dev</Username><AuthenticationType>SqlPassword</AuthenticationType><Password encrypted="1">never-store-this</Password></DataSource1><DataSource2 type="LiveDatabaseSource"><ServerName>target</ServerName><DatabaseName>Test</DatabaseName><AuthenticationType>Windows</AuthenticationType></DataSource2><Options>IgnoreComments,IgnorePermissions</Options></Project>"#;
     #[test]
     fn imports_direction_and_auth() {

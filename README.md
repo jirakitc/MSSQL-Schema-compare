@@ -1,27 +1,31 @@
-# Schema Compare — 1.0.0-beta
+# Schema Compare — 1.0.1-beta
 
 โปรแกรม Windows สำหรับเปรียบเทียบโครงสร้าง SQL Server ระหว่าง Source และ Target พร้อม native GUI และ CLI เขียนด้วย Rust ใช้งานแบบ Portable ZIP ไม่มีระบบ license, activation หรือ licensing server
 
 Repository: [jirakitc/MSSQL-Schema-compare](https://github.com/jirakitc/MSSQL-Schema-compare) · [GitHub Releases](https://github.com/jirakitc/MSSQL-Schema-compare/releases)
 
-## Release 1.0.0-beta
+## Release 1.0.1-beta
 
 รุ่น beta นี้รวมความสามารถปัจจุบันไว้ใน release เดียว:
 
 - เชื่อมต่อและอ่าน Source/Target พร้อมกัน พร้อมแสดงสถานะการทำงาน
-- Compare แบบแบ่งกลุ่มตามชนิด object หรือชนิดความต่าง มี SQL Differences สองฝั่งพร้อมเลขบรรทัดและสีไฮไลต์
+- Compare เริ่มต้นแบ่งกลุ่ม Diff / Source Only / Target Only พร้อมจำนวนที่เลือกและยุบ/ขยายแต่ละกลุ่มได้ หัวตารางสีน้ำเงิน `#2e609b` สลับไปจัดกลุ่มตามชนิด object ได้
+- SQL Differences แสดงสองฝั่งพร้อมเลขบรรทัดและสีไฮไลต์ เมื่อเปิด Ignore column order จะแสดงคอลัมน์เรียงตามชื่อเพื่อไม่ไฮไลต์ความต่างจากการสลับตำแหน่ง เลขบรรทัดอ้างอิงมุมมองที่จัดเรียงนี้ ข้อมูล snapshot เดิมไม่เปลี่ยน
+- Auto-map similar columns เป็นตัวเลือกใน Edit project → Ignore options (ปิดเป็นค่าเริ่มต้น) จับคู่ชื่อที่คล้ายกันและชนิดข้อมูลตรงกันแบบไม่กำกวม ชื่อที่ตรงกันมีสิทธิ์ก่อน แสดงคู่ Target → Source ใน SQL Differences และ Review แล้ว Deploy ด้วย `sp_rename` เพื่อรักษาข้อมูลเดิม คู่ที่กำกวม ชื่อสั้น หรือชนิดข้อมูลไม่ตรงกันจะใช้พฤติกรรม drop/add เดิม ควรตรวจคู่ที่จับก่อน Deploy
 - Different / Source only / Target only เป็น multi-select filters; เลือกแถวตามสถานะ ชนิด object และ Search objects พร้อมยกเลิกแถวที่ถูกซ่อน
 - Edit project ขนาดกะทัดรัด ลากย้ายได้ และเลือก Database จาก dropdown ที่โหลดชื่อฐานเมื่อเปิด
 - Recent connections เก็บ 12 คู่ล่าสุดที่ Compare สำเร็จ แบ่งกลุ่มตาม Source Address → Target Address มี Search, Use connection และ Clear โดยไม่เก็บ password ลงไฟล์
+- หน้า Compare แสดง Target Only เป็นสีแดง ปุ่ม Deploy อยู่กึ่งกลาง แถบแบ่งตารางกับ SQL ลากปรับขึ้นลงเพื่อขยายหรือหุบส่วน SQL ได้
+- กด Cancel ระหว่าง Compare เพื่อหยุดการอ่าน Source/Target โดยคงผลก่อนหน้าไว้ ผลจากงานที่ยกเลิกจะไม่เขียนทับ Compare ใหม่
 - สร้างและรัน deployment script เฉพาะ object ที่เลือก ตรวจ schema drift ก่อนรัน และ Compare ใหม่หลัง Deploy พร้อมแสดง Success/Fail
 - ยึดโครงสร้างคอลัมน์ Source สำหรับตารางที่เลือก: เพิ่มคอลัมน์ ลบคอลัมน์ส่วนเกิน และเปลี่ยน datatype รวมการลดขนาด โดยตรวจข้อมูลจริงก่อนแปลง
 - สร้าง index/PK/UNIQUE/FK/CHECK/default ที่เกี่ยวข้องกลับภายใน transaction; เมื่อเกิด error จะหยุดและ rollback
 - Help → About แสดงเวอร์ชันปัจจุบันและ GitHub release ที่เผยแพร่ล่าสุด รวม pre-release; ปุ่ม Update เปิดหน้า GitHub Releases เพื่อดาวน์โหลด ZIP ด้วยตนเอง
-- ไอคอนโปรแกรมและเวอร์ชันใน GUI, CLI และ Windows EXE ตรงกันเป็น 1.0.0-beta
+- ไอคอนโปรแกรมและเวอร์ชันใน GUI, CLI และ Windows EXE ตรงกันเป็น 1.0.1-beta
 
 ## เริ่มใช้งาน
 
-1. แตก `SchemaCompare-1.0.0-beta-win-x64.zip` แล้วเปิด `schema-compare.exe`
+1. แตก `SchemaCompare-1.0.1-beta-win-x64.zip` แล้วเปิด `schema-compare.exe`
 2. กด **Edit project** หรือ **Project → Edit project** แล้วกำหนด Source และ Target
 3. กรอก Server, Authentication และ Username/Password ตามการเชื่อมต่อ เปิด dropdown Database เพื่อเลือกฐาน
 4. กด **Compare now / Refresh** โปรแกรมอ่าน catalog โดยยังไม่แก้ฐานข้อมูล
@@ -37,7 +41,7 @@ Source คือโครงสร้างที่ต้องการให�
 | หมวด | คำสั่ง |
 | --- | --- |
 | Project | New, Open, Save, Edit, Recent connections |
-| Compare | Compare/Refresh, Comparison results, Ignore options, Filter, Swap |
+| Compare | Ignore Option, Filter Object Type |
 | Deployment | Review SQL, Deploy |
 | Export | Comparison report, SQL script, Source/Target snapshot |
 | Help | About, Update (GitHub Releases) |
@@ -76,7 +80,7 @@ Recent history อยู่ที่ `%LOCALAPPDATA%\SchemaCompare\recent-connec
 cargo fmt --all
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
-.\build.ps1 -OutputDirectory 'dist\SchemaCompare-1.0.0-beta'
+.\build.ps1 -OutputDirectory 'dist\SchemaCompare-1.0.1-beta'
 ```
 
 Build ใช้ Rust และ MinGW-w64 GNU toolchain ที่ตั้งไว้ใน `.cargo/config.toml` หรือปรับเป็น MSVC toolchain ตามเครื่อง คำสั่ง build สร้าง GUI/CLI, icon assets, README และ samples สำหรับจัดเป็น Portable ZIP พร้อม third-party license notices

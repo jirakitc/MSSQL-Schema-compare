@@ -103,7 +103,7 @@ impl App {
                             );
                         });
                     ui.end_row();
-                    ui.label("User name");
+                    ui.label("Username");
                     ui.add_enabled(
                         !endpoint.connection.windows_auth,
                         egui::TextEdit::singleline(&mut endpoint.connection.username)
@@ -187,7 +187,7 @@ impl App {
     }
     fn ignore_options(ui: &mut egui::Ui, options: &mut Options) -> bool {
         let mut changed = false;
-        ui.label("Choose differences to ignore. These options affect comparison and deployment selection.");
+        ui.label("Choose comparison, column mapping and Ignore options. These affect comparison and deployment.");
         ui.add_space(5.0);
         ui.columns(2,|cols|{
             egui::Frame::group(cols[0].style()).show(&mut cols[0],|ui|{
@@ -198,6 +198,7 @@ impl App {
             });
             egui::Frame::group(cols[0].style()).show(&mut cols[0],|ui|{
                 ui.strong("Tables & columns");
+                changed|=ui.checkbox(&mut options.auto_map_similar_columns,"Auto-map similar columns").on_hover_text("Map unambiguous similar column names with compatible types. Deployment renames Target columns to Source names and preserves values; review the mapping in SQL Differences.").changed();
                 changed|=ui.checkbox(&mut options.ignore_column_order,"Ignore column order").changed();
                 changed|=ui.checkbox(&mut options.ignore_column_name_case,"Ignore column name case").changed();
                 changed|=ui.checkbox(&mut options.ignore_collation,"Ignore column collation").changed();
