@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Schema Compare — Source and Target databases</title>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="#132B49" stroke="#254E75" stroke-width="8"/>
+  <g fill="#329FBB">
+    <path d="M66 158H210V326C210 347 178 364 138 364S66 347 66 326Z"/>
+    <ellipse cx="138" cy="158" rx="72" ry="38" fill="#79E4E7"/>
+  </g>
+  <g fill="none" stroke="#82E6E4" stroke-width="8">
+    <path d="M66 244C66 265 98 282 138 282S210 265 210 244"/>
+    <path d="M66 294C66 315 98 332 138 332S210 315 210 294"/>
+  </g>
+  <g fill="#DCE7F4">
+    <path d="M302 158H446V326C446 347 414 364 374 364S302 347 302 326Z"/>
+    <ellipse cx="374" cy="158" rx="72" ry="38" fill="#FFFFFF"/>
+  </g>
+  <g fill="none" stroke="#A3BBD5" stroke-width="8">
+    <path d="M302 244C302 265 334 282 374 282S446 265 446 244"/>
+    <path d="M302 294C302 315 334 332 374 332S446 315 446 294"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="13">
+    <path d="M224 225H288M274 211L288 225L274 239" stroke="#FFFFFF"/>
+    <path d="M288 285H224M238 271L224 285L238 299" stroke="#79E4E7"/>
+  </g>
+</svg>

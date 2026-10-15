@@ -1,0 +1,33 @@
+[package]
+name = "schema-compare"
+version = "1.0.0-beta"
+edition = "2021"
+description = "Independent SQL Server schema comparison tool"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "2"
+tempfile = "3"
+base64 = "0.22"
+roxmltree = "0.20"
+egui_extras = { version = "0.31.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
+
+[profile.release]
+opt-level = 2
+strip = true
+
+[[bin]]
+name = "schema-compare"
+path = "src/main.rs"
+
+[[bin]]
+name = "schema-compare-cli"
+path = "src/cli.rs"

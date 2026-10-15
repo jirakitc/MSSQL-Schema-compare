@@ -1,0 +1,19 @@
+# Generated builds and downloaded toolchains
+/target/
+/.tools/
+/dist/
+
+# Local test output and connection settings
+/tests/
+/test-results/
+/projects/
+*.local.json
+recent-connections.json
+*.mdf
+*.ldf
+
+# Retired installer and local build cleanup
+/installer/
+/build-installer.ps1
+/test-installer.ps1
+/cleanup-old-builds.ps1

@@ -1,0 +1,204 @@
+{
+  "format_version": 1,
+  "label": "(localdb)\\SchemaCompareTest / SC_Rust_Source",
+  "database": "SC_Rust_Source",
+  "warnings": [
+    "Scope: tables/columns/defaults, SQL modules, DML triggers, dbo-owned schemas, rowstore indexes, PK/UNIQUE/FK/CHECK constraints. Permissions, users/roles, extended properties, synonyms, sequences, CLR, full-text, physical filegroups and database options are not compared. Object names are case-sensitive. Cross-database and dynamic-SQL dependencies require manual review."
+  ],
+  "objects": [
+    {
+      "schema": "dbo",
+      "name": "CK_Orders_Amount",
+      "kind": "Check",
+      "definition": "ALTER TABLE [dbo].[Orders] WITH CHECK ADD CONSTRAINT [CK_Orders_Amount] CHECK ([Amount]>=(0));",
+      "parent": "Orders",
+      "dependencies": [
+        "Table:dbo::Orders"
+      ],
+      "columns": [],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "FK_Orders_Customers",
+      "kind": "ForeignKey",
+      "definition": "ALTER TABLE [dbo].[Orders] WITH CHECK ADD CONSTRAINT [FK_Orders_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([Id]) ON DELETE NO ACTION ON UPDATE NO ACTION;",
+      "parent": "Orders",
+      "dependencies": [
+        "PrimaryKey:dbo:Customers:PK_Customers",
+        "Table:dbo::Customers",
+        "Table:dbo::Orders"
+      ],
+      "columns": [],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "DoubleAmount",
+      "kind": "Function",
+      "definition": "CREATE FUNCTION dbo.DoubleAmount(@amount decimal(18,2)) RETURNS decimal(18,2) AS BEGIN RETURN @amount*2; END;\n",
+      "parent": null,
+      "dependencies": [],
+      "columns": [],
+      "ansi_nulls": true,
+      "quoted_identifier": false
+    },
+    {
+      "schema": "dbo",
+      "name": "IX_Customers_Name",
+      "kind": "Index",
+      "definition": "CREATE NONCLUSTERED INDEX [IX_Customers_Name] ON [dbo].[Customers] ([Name] ASC) INCLUDE ([Email]) WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);",
+      "parent": "Customers",
+      "dependencies": [
+        "Table:dbo::Customers"
+      ],
+      "columns": [],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "PK_Customers",
+      "kind": "PrimaryKey",
+      "definition": "ALTER TABLE [dbo].[Customers] ADD CONSTRAINT [PK_Customers] PRIMARY KEY CLUSTERED ([Id] ASC) WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);",
+      "parent": "Customers",
+      "dependencies": [
+        "Table:dbo::Customers"
+      ],
+      "columns": [],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "PK_Orders",
+      "kind": "PrimaryKey",
+      "definition": "ALTER TABLE [dbo].[Orders] ADD CONSTRAINT [PK_Orders] PRIMARY KEY CLUSTERED ([Id] ASC) WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);",
+      "parent": "Orders",
+      "dependencies": [
+        "Table:dbo::Orders"
+      ],
+      "columns": [],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "GetCustomers",
+      "kind": "Procedure",
+      "definition": "CREATE PROCEDURE dbo.GetCustomers AS SELECT Id,Name,Email FROM dbo.Customers ORDER BY Name;\n",
+      "parent": null,
+      "dependencies": [
+        "Table:dbo::Customers"
+      ],
+      "columns": [],
+      "ansi_nulls": true,
+      "quoted_identifier": false
+    },
+    {
+      "schema": "dbo",
+      "name": "Customers",
+      "kind": "Table",
+      "definition": "CREATE TABLE [dbo].[Customers] (\n    [Id] [int] IDENTITY(1,1) NOT NULL,\n    [Name] [nvarchar](120) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,\n    [Email] [nvarchar](200) COLLATE SQL_Latin1_General_CP1_CI_AS NULL\n);",
+      "parent": null,
+      "dependencies": [],
+      "columns": [
+        {
+          "name": "Id",
+          "data_type": "[int]",
+          "nullable": false,
+          "identity": "1,1",
+          "computed": null,
+          "persisted": false,
+          "default": null,
+          "default_name": null,
+          "collation": null
+        },
+        {
+          "name": "Name",
+          "data_type": "[nvarchar](120)",
+          "nullable": false,
+          "identity": null,
+          "computed": null,
+          "persisted": false,
+          "default": null,
+          "default_name": null,
+          "collation": "SQL_Latin1_General_CP1_CI_AS"
+        },
+        {
+          "name": "Email",
+          "data_type": "[nvarchar](200)",
+          "nullable": true,
+          "identity": null,
+          "computed": null,
+          "persisted": false,
+          "default": null,
+          "default_name": null,
+          "collation": "SQL_Latin1_General_CP1_CI_AS"
+        }
+      ],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "Orders",
+      "kind": "Table",
+      "definition": "CREATE TABLE [dbo].[Orders] (\n    [Id] [int] IDENTITY(1,1) NOT NULL,\n    [CustomerId] [int] NOT NULL,\n    [Amount] [decimal](18,2) NOT NULL CONSTRAINT [DF_Orders_Amount] DEFAULT ((0))\n);",
+      "parent": null,
+      "dependencies": [],
+      "columns": [
+        {
+          "name": "Id",
+          "data_type": "[int]",
+          "nullable": false,
+          "identity": "1,1",
+          "computed": null,
+          "persisted": false,
+          "default": null,
+          "default_name": null,
+          "collation": null
+        },
+        {
+          "name": "CustomerId",
+          "data_type": "[int]",
+          "nullable": false,
+          "identity": null,
+          "computed": null,
+          "persisted": false,
+          "default": null,
+          "default_name": null,
+          "collation": null
+        },
+        {
+          "name": "Amount",
+          "data_type": "[decimal](18,2)",
+          "nullable": false,
+          "identity": null,
+          "computed": null,
+          "persisted": false,
+          "default": "((0))",
+          "default_name": "DF_Orders_Amount",
+          "collation": null
+        }
+      ],
+      "ansi_nulls": null,
+      "quoted_identifier": null
+    },
+    {
+      "schema": "dbo",
+      "name": "CustomerNames",
+      "kind": "View",
+      "definition": "CREATE VIEW dbo.CustomerNames AS SELECT Id,Name,Email FROM dbo.Customers;\n",
+      "parent": null,
+      "dependencies": [
+        "Table:dbo::Customers"
+      ],
+      "columns": [],
+      "ansi_nulls": true,
+      "quoted_identifier": false
+    }
+  ]
+}
