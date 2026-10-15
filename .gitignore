@@ -17,3 +17,4 @@ recent-connections.json
 /build-installer.ps1
 /test-installer.ps1
 /cleanup-old-builds.ps1
+*.ps1

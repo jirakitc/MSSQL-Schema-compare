@@ -1,6 +1,6 @@
 [package]
 name = "schema-compare"
-version = "1.0.0-beta"
+version = "1.0.1-beta"
 edition = "2021"
 description = "Independent SQL Server schema comparison tool"
 

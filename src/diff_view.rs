@@ -1,4 +1,40 @@
+use crate::{
+    engine::Options,
+    model::{Kind, Object},
+    sql::column_sql,
+};
 use similar::{ChangeTag, TextDiff};
+
+/// Normalize the table-column display only. Captured snapshots and deployment
+/// SQL keep their original definitions; ignored order must not create yellow rows.
+pub fn display_sql(object: &Object, options: &Options) -> String {
+    if object.kind != Kind::Table || !options.ignore_column_order {
+        return object.definition.clone();
+    }
+    let mut columns: Vec<_> = object.columns.iter().collect();
+    columns.sort_by_key(|c| {
+        if options.ignore_column_name_case {
+            c.name.to_lowercase()
+        } else {
+            c.name.clone()
+        }
+    });
+    let body = columns
+        .iter()
+        .map(|c| format!("    {}", column_sql(c)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let children = object
+        .definition
+        .split_once("\nGO\n\n-- Constraints, indexes and DML triggers\n")
+        .map(|(_, tail)| tail);
+    let mut result = format!("CREATE TABLE {} (\n{}\n);", object.qualified(), body);
+    if let Some(children) = children {
+        result.push_str("\nGO\n\n-- Constraints, indexes and DML triggers\n");
+        result.push_str(children);
+    }
+    result
+}
 #[derive(Clone, Debug)]
 pub struct Line {
     pub number: usize,

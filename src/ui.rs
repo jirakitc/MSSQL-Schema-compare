@@ -3,7 +3,7 @@ use egui_extras::{Column, TableBuilder};
 use schema_compare::{
     comparison::compare_objects as compare,
     database_browser::DatabaseBrowser,
-    diff_view::{aligned, Row as DiffRow},
+    diff_view::{aligned, display_sql, Row as DiffRow},
     engine::{plan, Difference, Status},
     model::Snapshot,
     project::{
@@ -24,6 +24,8 @@ use std::{
 };
 
 const BLUE: Color32 = Color32::from_rgb(46, 96, 155);
+const DEPLOY_BUTTON_SIZE: Vec2 = Vec2::new(130.0, 32.0);
+const TARGET_DEPLOY_BUTTON_SIZE: Vec2 = Vec2::new(170.0, 36.0);
 const TEXT: Color32 = Color32::from_rgb(38, 38, 38);
 const MUTED: Color32 = Color32::from_rgb(104, 104, 104);
 const BORDER: Color32 = Color32::from_rgb(207, 207, 207);
@@ -172,9 +174,254 @@ fn object_name_label(ui: &mut egui::Ui, name: &str) -> egui::Response {
     .on_hover_cursor(egui::CursorIcon::Default)
 }
 
+fn fixed_width_controls<R>(
+    ui: &mut egui::Ui,
+    width: f32,
+    layout: egui::Layout,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.allocate_ui_with_layout(Vec2::new(width, 0.0), layout, |ui| {
+        // A requested allocation can shrink to its contents. Reserve the full
+        // side width so the central action stays at the window's midpoint.
+        ui.set_min_width(width);
+        ui.set_max_width(width);
+        contents(ui)
+    })
+}
+
+fn results_table_builder(ui: &mut egui::Ui, height: f32) -> TableBuilder<'_> {
+    TableBuilder::new(ui)
+        .id_salt("results_table")
+        .striped(true)
+        .resizable(true)
+        .sense(egui::Sense::click())
+        .auto_shrink([false, false])
+        .min_scrolled_height(height)
+        .max_scroll_height(height)
+}
+
+fn target_deploy_button(ui: &mut egui::Ui, enabled: bool, primary: bool) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        TARGET_DEPLOY_BUTTON_SIZE,
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            let text = if primary {
+                "Deploy to Target"
+            } else {
+                "Deploy to Target..."
+            };
+            let button = if primary {
+                egui::Button::new(RichText::new(text).color(Color32::WHITE)).fill(BLUE)
+            } else {
+                egui::Button::new(text)
+            };
+            ui.add_enabled(enabled, button.min_size(TARGET_DEPLOY_BUTTON_SIZE))
+        },
+    )
+    .inner
+}
+
+fn compare_splitter(
+    ui: &mut egui::Ui,
+    height: &mut f32,
+    drag: &mut Option<(f32, f32)>,
+    max_height: f32,
+) -> egui::Rect {
+    let (bar, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), egui::Sense::hover());
+    let response = ui.interact(bar, ui.id().with("compare_splitter"), egui::Sense::drag());
+    ui.painter()
+        .rect_filled(bar, 0.0, Color32::from_rgb(231, 231, 231));
+    ui.painter().line_segment(
+        [
+            bar.center() - Vec2::new(20.0, 0.0),
+            bar.center() + Vec2::new(20.0, 0.0),
+        ],
+        Stroke::new(2.0_f32, BORDER),
+    );
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if response.drag_started() {
+        *drag = response.interact_pointer_pos().map(|p| (p.y, *height));
+    }
+    if response.dragged() {
+        if let (Some((start_y, start_height)), Some(pointer)) =
+            (*drag, response.interact_pointer_pos())
+        {
+            *height = (start_height + pointer.y - start_y).clamp(40.0, max_height);
+        }
+    }
+    if response.drag_stopped() {
+        *drag = None;
+    }
+    bar
+}
+
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+    #[test]
+    fn deploy_to_target_text_is_centered_inside_both_buttons() {
+        let ctx = egui::Context::default();
+        for primary in [true, false] {
+            for horizontal in [true, false] {
+                let mut button_rect = egui::Rect::NOTHING;
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::new(800.0, 500.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let layout = if horizontal {
+                                egui::Layout::left_to_right(egui::Align::Min)
+                            } else {
+                                egui::Layout::top_down(egui::Align::Min)
+                            };
+                            ui.with_layout(layout, |ui| {
+                                button_rect = target_deploy_button(ui, true, primary).rect;
+                            });
+                        });
+                    },
+                );
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .expect("Deploy button must render its text");
+                let text_center = text.pos + text.galley.rect.center().to_vec2();
+                assert!((text_center.x - button_rect.center().x).abs() < 1.0);
+                assert!((text_center.y - button_rect.center().y).abs() < 1.0);
+            }
+        }
+    }
+    #[test]
+    fn short_results_leave_blank_space_above_splitter_when_panel_is_expanded() {
+        let ctx = egui::Context::default();
+        let mut bottom_positions = vec![];
+        for height in [120.0, 500.0] {
+            let mut bottom = 0.0;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(1000.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let top = ui.cursor().top();
+                        results_table_builder(ui, height)
+                            .column(Column::remainder())
+                            .header(26.0, |mut header| {
+                                header.col(|ui| {
+                                    ui.label("Object");
+                                });
+                            })
+                            .body(|body| {
+                                body.rows(24.0, 2, |mut row| {
+                                    row.col(|ui| {
+                                        ui.label("Table");
+                                    });
+                                });
+                            });
+                        bottom = ui.cursor().top();
+                        assert!(
+                            bottom - top >= height + 26.0,
+                            "Panel shrank to its two rows: {}",
+                            bottom - top
+                        );
+                    });
+                },
+            );
+            bottom_positions.push(bottom);
+        }
+        assert!((bottom_positions[1] - bottom_positions[0] - 380.0).abs() < 2.0);
+    }
+    #[test]
+    fn deploy_stays_centered_when_resizing_with_different_summary_widths() {
+        let ctx = egui::Context::default();
+        for width in [1050.0, 1380.0, 1920.0, 1380.0, 1050.0] {
+            for text in ["9 selected", "Different: 123456 · Source only: 100 · Target only: 300 · Identical: 987654 · 123456 selected"] {
+                for _ in 0..2 {
+                    let _=ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,Vec2::new(width,800.0))),..Default::default()},|ctx| {
+                        egui::CentralPanel::default().show(ctx,|ui| {
+                            let expected=ui.available_rect_before_wrap().center().x;
+                            ui.horizontal(|ui| {
+                                let side=((ui.available_width()-DEPLOY_BUTTON_SIZE.x-ui.spacing().item_spacing.x*2.0)/2.0).max(0.0);
+                                fixed_width_controls(ui,side,egui::Layout::left_to_right(egui::Align::Center),|ui| {ui.horizontal_wrapped(|ui|{ui.label(text);});});
+                                let button=ui.add(egui::Button::new("Deploy...").min_size(DEPLOY_BUTTON_SIZE));
+                                assert!(button.rect.width()>=130.0 && button.rect.height()>=32.0);
+                                fixed_width_controls(ui,side,egui::Layout::right_to_left(egui::Align::Center),|ui| {let _=ui.button("Select filtered");let _=ui.button("Clear");});
+                                assert!((button.rect.center().x-expected).abs()<1.0,"width={width}, button={}, expected={expected}",button.rect.center().x);
+                            });
+                        });
+                    });
+                }
+            }
+        }
+    }
+    #[test]
+    fn splitter_drags_down_to_collapse_sql_and_back_up_without_losing_pointer_capture() {
+        let ctx = egui::Context::default();
+        let mut height = 200.0;
+        let mut drag = None;
+        let mut render = |events| {
+            let mut bar = egui::Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(800.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.allocate_space(Vec2::new(ui.available_width(), height));
+                        bar = compare_splitter(ui, &mut height, &mut drag, 600.0);
+                    });
+                },
+            );
+            (bar, height)
+        };
+        let (bar, _) = render(vec![]);
+        let at = bar.center();
+        render(vec![egui::Event::PointerMoved(at)]);
+        render(vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        render(vec![egui::Event::PointerMoved(at + Vec2::new(0.0, 10.0))]);
+        let (_, down) = render(vec![egui::Event::PointerMoved(at + Vec2::new(0.0, 450.0))]);
+        assert_eq!(
+            down, 600.0,
+            "Dragging down must allow collapsing the SQL pane"
+        );
+        let (_, up) = render(vec![egui::Event::PointerMoved(at - Vec2::new(0.0, 80.0))]);
+        assert!(
+            up < 200.0,
+            "Pointer capture was lost after the splitter moved"
+        );
+        render(vec![egui::Event::PointerButton {
+            pos: at - Vec2::new(0.0, 80.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        assert!(drag.is_none());
+    }
     fn frame(
         ctx: &egui::Context,
         events: Vec<egui::Event>,
@@ -270,6 +517,7 @@ pub struct App {
     diffs: Vec<Difference>,
     pending: Option<Receiver<Event>>,
     pending_started: Option<std::time::Instant>,
+    compare_cancel: Option<schema_compare::cancellation::CancellationToken>,
     deploy_open: bool,
     deployment_notice: Option<(bool, String)>,
     comparison_stale: bool,
@@ -301,7 +549,7 @@ pub struct App {
     filters_open: bool,
     project_path: Option<PathBuf>,
     table_height: f32,
-    split_drag: bool,
+    split_drag: Option<(f32, f32)>,
     compare_on_start: bool,
     loaded_connections: Option<(String, String)>,
     database_browsers: [DatabaseBrowser; 2],
@@ -364,6 +612,7 @@ impl App {
             diffs: vec![],
             pending: None,
             pending_started: None,
+            compare_cancel: None,
             deploy_open: false,
             deployment_notice: None,
             comparison_stale: false,
@@ -372,7 +621,7 @@ impl App {
             message: "Choose a project or recent connections to compare SQL Server schemas.".into(),
             error: false,
             query: String::new(),
-            grouping: Grouping::Object,
+            grouping: Grouping::Difference,
             collapsed: BTreeSet::from(["3:Identical objects".into()]),
             hidden_kinds: BTreeSet::new(),
             show_identical: false,
@@ -395,7 +644,7 @@ impl App {
             filters_open: false,
             project_path: None,
             table_height: 320.0,
-            split_drag: false,
+            split_drag: None,
             compare_on_start: false,
             loaded_connections: None,
             database_browsers: Default::default(),
@@ -566,14 +815,14 @@ impl App {
         self.selected = Some(index);
         let d = &self.diffs[index];
         self.diff_rows = aligned(
-            d.source
+            &d.source
                 .as_ref()
-                .map(|o| o.definition.as_str())
-                .unwrap_or(""),
-            d.target
+                .map(|o| display_sql(o, &self.project.options))
+                .unwrap_or_default(),
+            &d.target
                 .as_ref()
-                .map(|o| o.definition.as_str())
-                .unwrap_or(""),
+                .map(|o| display_sql(o, &self.project.options))
+                .unwrap_or_default(),
         );
         self.diff_horizontal = 0.0;
         self.diff_cursor = None;
@@ -631,6 +880,8 @@ impl App {
         }
         let a = self.project.source.clone();
         let b = self.project.target.clone();
+        let cancel = schema_compare::cancellation::CancellationToken::default();
+        self.compare_cancel = Some(cancel.clone());
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
         self.pending_started = Some(std::time::Instant::now());
@@ -647,7 +898,8 @@ impl App {
                     let _ = tx.send(Event::Progress(format!("{side}: {stage}")));
                     ctx.request_repaint();
                 };
-                let (s,t)=schema_compare::loading::load_pair(&a,&b,progress)?;
+                let (s,t)=schema_compare::loading::load_pair_cancellable(&a,&b,progress,&cancel)?;
+                cancel.check()?;
                 progress("Compare", "Matching objects and checking columns, SQL definitions, constraints and indexes");
                 Ok((s, t))
             })()
@@ -655,6 +907,19 @@ impl App {
             let _ = tx.send(Event::Loaded(result));
             ctx.request_repaint();
         });
+    }
+    fn cancel_compare(&mut self) {
+        if let Some(cancel) = self.compare_cancel.take() {
+            cancel.cancel();
+            // Dropping this operation's receiver discards late events; a new
+            // comparison always has its own channel and cancellation token.
+            self.pending = None;
+            self.pending_started = None;
+            self.source_status.clear();
+            self.target_status.clear();
+            self.message = "Comparison cancelled. Previous results are unchanged.".into();
+            self.error = false;
+        }
     }
     fn deploy_ready(&self) -> bool {
         self.pending.is_none()
@@ -714,7 +979,7 @@ impl App {
             ui.separator();
             egui::ScrollArea::both().max_height(220.0).show(ui,|ui|{ui.label(RichText::new(&self.script).monospace());});
             ui.separator();
-            run=ui.add_enabled(self.deploy_ready(),egui::Button::new(RichText::new("Deploy to Target").color(Color32::WHITE)).fill(BLUE)).clicked();
+            run=target_deploy_button(ui,self.deploy_ready(),true).clicked();
         });
         self.deploy_open = open;
         if run {
@@ -912,32 +1177,12 @@ impl App {
                             }
                         }
                         "Compare" => {
-                            if ui.button("Compare now / Refresh       F5").clicked() {
-                                self.start(ctx);
-                                ui.close_menu();
-                            }
-                            if ui.button("Swap source and target").clicked() {
-                                self.swap();
-                                ui.close_menu();
-                            }
-                            if ui
-                                .add_enabled(
-                                    self.source.is_some(),
-                                    egui::Button::new("Comparison results"),
-                                )
-                                .clicked()
-                            {
-                                self.show_recent = false;
-                                self.edit_open = false;
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            if ui.button("Ignore options...").clicked() {
+                            if ui.button("Ignore Option").clicked() {
                                 self.edit_open = true;
                                 self.edit_tab = 1;
                                 ui.close_menu();
                             }
-                            if ui.button("Filter object types...").clicked() {
+                            if ui.button("Filter Object Type").clicked() {
                                 self.filters_open = true;
                                 ui.close_menu();
                             }
@@ -1195,13 +1440,8 @@ impl App {
             // Results select objects rather than text. Selectable labels otherwise
             // intercept row clicks and turn the cursor into a text-selection cursor.
             ui.style_mut().interaction.selectable_labels = false;
-            TableBuilder::new(ui)
-                .id_salt("results_table")
-                .striped(true)
-                .resizable(true)
-                .sense(egui::Sense::click())
-                .min_scrolled_height(height)
-                .max_scroll_height(height)
+            ui.visuals_mut().selection.bg_fill = Color32::from_gray(235);
+            results_table_builder(ui, height)
                 .column(Column::exact(30.0))
                 .column(Column::initial(330.0).at_least(180.0))
                 .column(Column::initial(90.0))
@@ -1211,7 +1451,13 @@ impl App {
                 .header(26.0, |mut row| {
                     for label in ["", "Object", "Owner", "Type", "Source", "Target"] {
                         row.col(|ui| {
-                            ui.strong(label);
+                            let cell = ui.max_rect();
+                            ui.painter().rect_filled(
+                                cell.expand2(Vec2::new(ui.spacing().item_spacing.x / 2.0, 0.0)),
+                                0.0,
+                                BLUE,
+                            );
+                            ui.label(RichText::new(label).strong().color(Color32::WHITE));
                         });
                     }
                 })
@@ -1263,7 +1509,7 @@ impl App {
                             row.col(|_| {});
                             row.col(|_| {});
                             row.col(|ui| {
-                                ui.small(format!("{selected_count} selected"));
+                                ui.small(format!("{selected_count} of {} selected", indices.len()));
                             });
                             row.col(|_| {});
                         }
@@ -1318,7 +1564,9 @@ impl App {
                                     Status::Equal => "=  Identical",
                                 };
                                 ui.label(RichText::new(label).color(
-                                    if d.status == Status::Different {
+                                    if d.status == Status::TargetOnly {
+                                        Color32::from_rgb(190, 35, 35)
+                                    } else if d.status == Status::Different {
                                         Color32::from_rgb(148, 96, 0)
                                     } else {
                                         MUTED
@@ -1382,6 +1630,23 @@ impl App {
         };
         let d = &self.diffs[index];
         let title = format!("{}  {}", d.object().kind, d.object().qualified());
+        if self.project.options.ignore_column_order
+            && d.object().kind == schema_compare::model::Kind::Table
+        {
+            ui.small("Ignore column order: SQL columns are displayed in name order. Line numbers refer to this normalized view.");
+        }
+        if let (Some(source), Some(target)) = (&d.source, &d.target) {
+            for mapping in schema_compare::column_mapping::auto_column_mappings(
+                source,
+                target,
+                &self.project.options,
+            ) {
+                ui.small(format!(
+                    "Auto-map (Target → Source): {} → {} · rename preserves existing data",
+                    mapping.target, mapping.source
+                ));
+            }
+        }
         ui.horizontal(|ui| {
             ui.strong(title);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1530,13 +1795,7 @@ impl App {
                     {
                         ui.ctx().copy_text(self.script.clone());
                     }
-                    if ui
-                        .add_enabled(
-                            self.deploy_ready(),
-                            egui::Button::new("Deploy to Target..."),
-                        )
-                        .clicked()
-                    {
+                    if target_deploy_button(ui, self.deploy_ready(), false).clicked() {
                         self.deploy_open = true;
                     }
                     ui.label(if self.blockers.is_empty() {
@@ -1712,6 +1971,7 @@ impl App {
         }
         if self.pending.is_none() {
             self.pending_started = None;
+            self.compare_cancel = None;
         }
         if self.pending.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(150));
@@ -1815,16 +2075,25 @@ impl eframe::App for App {
                 self.source_target_strip(ui, false);
                 ui.add_space(6.0);
                 if self.pending.is_some() {
+                    ui.vertical_centered(|ui| {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
+                        ui.vertical_centered(|ui| {
                             ui.strong(&self.message);
-                        });
                         if let Some(start) = self.pending_started {
                             ui.small(format!("Elapsed: {} seconds", start.elapsed().as_secs()));
                         }
                         if !self.source_status.is_empty(){ui.label(format!("Source: {}",self.source_status));}
                         if !self.target_status.is_empty(){ui.label(format!("Target: {}",self.target_status));}
+                        if (self.source.is_some() && !self.show_recent) || self.compare_cancel.is_none() {
+                            ui.add_space(8.0);
+                            ui.spinner();
+                            if self.compare_cancel.is_some() {
+                                ui.add_space(6.0);
+                                if ui.button("Cancel").clicked() {self.cancel_compare();}
+                            }
+                        }
+                        });
+                    });
                     });
                     ui.add_space(6.0);
                 }
@@ -1835,86 +2104,48 @@ impl eframe::App for App {
                         .filter(|d| d.selected && d.status != Status::Equal)
                         .count();
                     ui.horizontal(|ui| {
-                        for (index,(status, label)) in [
-                            (Status::Different, "Different"),
-                            (Status::SourceOnly, "Source only"),
-                            (Status::TargetOnly, "Target only"),
-                            (Status::Equal, "Identical"),
-                        ].into_iter().enumerate() {
-                            let n = self.diffs.iter().filter(|d| d.status == status).count();
-                            if index<3 {
-                                if ui.selectable_label(self.status_filters[index],format!("{label}: {n}"))
-                                    .on_hover_text("Toggle this status filter. Multiple statuses can be active; matching rows are selected.")
-                                    .clicked() {
-                                    self.status_filters[index] = !self.status_filters[index];
-                                    self.select_filtered();
+                        let side_width=((ui.available_width()-DEPLOY_BUTTON_SIZE.x-ui.spacing().item_spacing.x*2.0)/2.0).max(0.0);
+                        fixed_width_controls(ui,side_width,egui::Layout::left_to_right(egui::Align::Center),|ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                for (index,(status,label)) in [
+                                    (Status::Different,"Different"),(Status::SourceOnly,"Source only"),
+                                    (Status::TargetOnly,"Target only"),(Status::Equal,"Identical"),
+                                ].into_iter().enumerate() {
+                                    let n=self.diffs.iter().filter(|d|d.status==status).count();
+                                    let mut text=RichText::new(format!("{label}: {n}"));
+                                    if status==Status::TargetOnly {text=text.color(Color32::from_rgb(190,35,35));}
+                                    if index<3 {
+                                        if ui.selectable_label(self.status_filters[index],text)
+                                            .on_hover_text("Toggle this status filter. Multiple statuses can be active; matching rows are selected.").clicked() {
+                                            self.status_filters[index] = !self.status_filters[index];self.select_filtered();
+                                        }
+                                    } else {ui.label(text);}
+                                    ui.separator();
                                 }
-                            } else { ui.label(format!("{label}: {n}")); }
-                            ui.separator();
+                                ui.label(format!("{selected} selected"));
+                                if ui.checkbox(&mut self.show_identical,"Show identical").changed(){self.select_filtered();}
+                            });
+                        });
+                        if ui.add_enabled(self.deploy_ready(),egui::Button::new(RichText::new("Deploy...").color(Color32::WHITE)).fill(BLUE).min_size(DEPLOY_BUTTON_SIZE))
+                            .on_hover_text("Execute selected schema changes on the live Target database")
+                            .on_disabled_hover_text("Deploy requires a live Target, selected changes, and no blockers. See Review for unsupported migrations.").clicked() {
+                            self.deploy_open=true;
                         }
-                        ui.label(format!("{selected} selected"));
-                        if ui.checkbox(&mut self.show_identical, "Show identical").changed() { self.select_filtered(); }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add_enabled(
-                                    self.deploy_ready(),
-                                    egui::Button::new(
-                                        RichText::new("Deploy...").color(Color32::WHITE),
-                                    )
-                                    .fill(BLUE),
-                                )
-                                .on_hover_text(
-                                    "Execute selected schema changes on the live Target database",
-                                )
-                                .on_disabled_hover_text("Deploy requires a live Target, selected changes, and no blockers. See Review for unsupported migrations.")
-                                .clicked()
-                            {
-                                self.deploy_open = true;
-                            }
-                            if ui.button("Select filtered").on_hover_text("Select only changes matching status, object type and search filters").clicked() {
-                                self.select_filtered();
-                            }
-                            if ui.button("Clear").clicked() {
-                                for d in &mut self.diffs {
-                                    d.selected = false;
-                                }
-                                self.rebuild();
-                            }
+                        fixed_width_controls(ui,side_width,egui::Layout::right_to_left(egui::Align::Center),|ui| {
+                            if ui.button("Select filtered").on_hover_text("Select only changes matching status, object type and search filters").clicked(){self.select_filtered();}
+                            if ui.button("Clear").clicked(){for d in &mut self.diffs {d.selected=false;}self.rebuild();}
                         });
                     });
-                    let max_height = (ui.available_height() - 170.0).max(100.0);
-                    self.table_height = self.table_height.clamp(100.0, max_height);
+                    let max_height = (ui.available_height() - 70.0).max(40.0);
+                    self.table_height = self.table_height.clamp(40.0, max_height);
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         self.results_table(ui, self.table_height);
                     });
-                    let (bar, response) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), 6.0),
-                        egui::Sense::drag(),
-                    );
-                    ui.painter()
-                        .rect_filled(bar, 0.0, Color32::from_rgb(231, 231, 231));
-                    ui.painter().line_segment(
-                        [
-                            bar.center() - Vec2::new(20.0, 0.0),
-                            bar.center() + Vec2::new(20.0, 0.0),
-                        ],
-                        Stroke::new(2.0_f32, BORDER),
-                    );
-                    if response.hovered() || response.dragged() {
-                        ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                    }
-                    if response.drag_started() {
-                        self.split_drag = true;
-                    }
-                    if response.dragged() && self.split_drag {
-                        self.table_height = (self.table_height
-                            + ctx.input(|i| i.pointer.delta().y))
-                        .clamp(100.0, max_height);
-                    }
-                    if response.drag_stopped() {
-                        self.split_drag = false;
-                    }
-                    self.lower_pane(ui);
+                    compare_splitter(ui, &mut self.table_height, &mut self.split_drag, max_height);
+                    ui.scope(|ui| {
+                        ui.set_clip_rect(ui.clip_rect().intersect(egui::Rect::from_min_max(ui.cursor().min,ui.max_rect().max)));
+                        self.lower_pane(ui);
+                    });
                 } else {
                     ui.add_space(40.0);
                     ui.vertical_centered(|ui| {
@@ -1938,6 +2169,10 @@ impl eframe::App for App {
                         if self.pending.is_some() {
                             ui.add_space(12.0);
                             ui.spinner();
+                            if self.compare_cancel.is_some() {
+                                ui.add_space(6.0);
+                                if ui.button("Cancel").clicked() {self.cancel_compare();}
+                            }
                         } else if !self.project.source.connection.database.is_empty() {
                             ui.add_space(16.0);
                             if ui
@@ -1965,9 +2200,9 @@ impl eframe::App for App {
 }
 fn status_group(status: &Status) -> &'static str {
     match status {
-        Status::Different => "0:Different objects",
-        Status::SourceOnly => "1:Objects that exist only in the source",
-        Status::TargetOnly => "2:Objects that exist only in the target",
+        Status::Different => "0:Diff · in both, but different",
+        Status::SourceOnly => "1:Source Only",
+        Status::TargetOnly => "2:Target Only",
         Status::Equal => "3:Identical objects",
     }
 }
